@@ -1,51 +1,31 @@
 package main
 
 import (
-    "errors"
-    "fmt"
-    "io"
-    "net/http"
-    "os"
-    "database/sql"
-    _ "github.com/lib/pq"
-)
+	"log"
+	"net/http"
 
-const (
-  host     = "localhost"
-  port     = 5432
-  user     = "postgres"
-  password = "masterpassword"
-  dbname   = "oort_objects"
+	"github.com/darlingson/Oort-Object-Storage/internal/api/routes"
+	"github.com/darlingson/Oort-Object-Storage/internal/config"
+	"github.com/darlingson/Oort-Object-Storage/internal/database"
 )
-
-func getRoot(w http.ResponseWriter, r *http.Request) {
-    fmt.Printf("got / request\n")
-    io.WriteString(w, "This is my website!\n")
-}
-func getHello(w http.ResponseWriter, r *http.Request) {
-    fmt.Printf("got /hello request\n")
-    io.WriteString(w, "Hello, HTTP!\n")
-}
 
 func main() {
 
-    psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
-    "password=%s dbname=%s sslmode=disable",
-    host, port, user, password, dbname)
+	cfg := config.Load()
 
-    db, err := sql.Open("postgres", psqlInfo)
-    if err != nil {
-        panic(err)
-    }
-    defer db.Close()
+	db, err := database.NewPostgres(cfg)
+	if err != nil {
+		log.Fatalf("failed to connect database: %v", err)
+	}
 
-    http.HandleFunc("/", getRoot)
-    http.HandleFunc("/hello", getHello)
-    err = http.ListenAndServe(":3333", nil)
-    if errors.Is(err, http.ErrServerClosed) {
-        fmt.Printf("server closed\n")
-    } else if err != nil {
-        fmt.Printf("error starting server: %s\n", err)
-        os.Exit(1)
-    }
+	defer db.Close()
+
+	router := routes.SetupRoutes()
+
+	log.Printf("server starting on port %s", cfg.AppPort)
+
+	err = http.ListenAndServe(":"+cfg.AppPort, router)
+	if err != nil {
+		log.Fatalf("server failed: %v", err)
+	}
 }
