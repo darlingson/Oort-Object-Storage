@@ -10,6 +10,7 @@ import (
 
 func SetupRoutes(
 	bucketHandler *handlers.BucketHandler,
+	objectHandler *handlers.ObjectHandler,
 ) http.Handler {
 
 	r := chi.NewRouter()
@@ -17,13 +18,14 @@ func SetupRoutes(
 	r.Get("/", handlers.HealthCheck)
 
 	r.Route("/buckets", func(r chi.Router) {
-
 		r.Post("/", bucketHandler.CreateBucket)
-
 		r.Get("/", bucketHandler.ListBuckets)
-
 		r.Get("/{name}", bucketHandler.GetBucket)
+	})
 
+	r.Route("/buckets/{bucket}/objects", func(r chi.Router) {
+		r.Put("/{key}", objectHandler.UploadObject)
+		r.Get("/{key}", objectHandler.DownloadObject)
 	})
 
 	return r

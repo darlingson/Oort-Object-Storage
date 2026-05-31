@@ -11,11 +11,13 @@ import (
 	"github.com/darlingson/Oort-Object-Storage/internal/services"
 	"github.com/darlingson/Oort-Object-Storage/internal/storage/repositories"
 	"github.com/darlingson/Oort-Object-Storage/internal/api/handlers"
+	"github.com/darlingson/Oort-Object-Storage/internal/storage/filesystem"
 )
 
 func main() {
 
 	cfg := config.Load()
+	config.InitLogger()
 
 	db, err := database.NewPostgres(cfg)
 	if err != nil {
@@ -29,16 +31,26 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
-	repo := repositories.NewPostgresBucketRepository(db)
-
-	bucketService := services.NewBucketService(repo)
-
+	bucketRepo := repositories.NewPostgresBucketRepository(db)
+	bucketService := services.NewBucketService(bucketRepo)
 	bucketHandler := handlers.NewBucketHandler(
 		bucketService,
 	)
 
+
+	filesystemDriver := filesystem.NewLocalDriver("./data/blobs")
+	objectRepo := repositories.NewPostgresObjectRepository(db)
+	objectService := services.NewObjectService(
+		bucketRepo,
+		objectRepo,
+		filesystemDriver,
+	)
+	objectHandler := handlers.NewObjectHandler(objectService)
+
+
 	router := routes.SetupRoutes(
 		bucketHandler,
+		objectHandler,
 	)
 
 	log.Printf("server starting on port %s", cfg.AppPort)

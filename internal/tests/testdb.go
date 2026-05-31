@@ -31,9 +31,16 @@ func TruncateTables(t *testing.T, db *sql.DB) {
 	t.Helper()
 
 	_, err := db.Exec(`
-		TRUNCATE TABLE buckets CASCADE
+		TRUNCATE TABLE
+			objects,
+			buckets
+		RESTART IDENTITY CASCADE
 	`)
+
 	if err != nil {
-		t.Fatalf("failed truncating tables: %v", err)
+		t.Fatalf(
+			"failed truncating tables: %v",
+			err,
+		)
 	}
 }
