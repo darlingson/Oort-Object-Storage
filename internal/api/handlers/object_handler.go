@@ -95,3 +95,39 @@ func (h *ObjectHandler) DownloadObject(
 
 	io.Copy(w, file)
 }
+
+func (h *ObjectHandler) DeleteObject(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+
+	bucket := chi.URLParam(r, "bucket")
+	key := chi.URLParam(r, "key")
+
+	err := h.service.DeleteObject(
+		r.Context(),
+		bucket,
+		key,
+	)
+
+	if err != nil {
+
+		if err == services.ErrBucketNotFound {
+			http.Error(
+				w,
+				"bucket not found",
+				http.StatusNotFound,
+			)
+			return
+		}
+
+		http.Error(
+			w,
+			"delete failed",
+			http.StatusInternalServerError,
+		)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
