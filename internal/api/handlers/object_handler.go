@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -60,4 +62,39 @@ func (h *ObjectHandler) UploadObject(
 	w.WriteHeader(http.StatusCreated)
 
 	json.NewEncoder(w).Encode(obj)
+}
+
+func (h *ObjectHandler) DownloadObject(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+
+	bucket := chi.URLParam(r, "bucket")
+	key := chi.URLParam(r, "key")
+
+	obj, err := h.service.GetObject(
+		r.Context(),
+		bucket,
+		key,
+	)
+
+	if err != nil {
+		http.Error(w, "object not found", http.StatusNotFound)
+		return
+	}
+
+	file, err := h.service.OpenObjectFile(obj.StoragePath)
+	if err != nil {
+		http.Error(w, "file missing", http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	w.Header().Set("Content-Type", obj.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(obj.SizeBytes, 10))
+	w.Header().Set("Content-Disposition", "attachment; filename="+obj.ObjectKey)
+
+	w.WriteHeader(http.StatusOK)
+
+	io.Copy(w, file)
 }

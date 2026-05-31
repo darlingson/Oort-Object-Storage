@@ -85,3 +85,36 @@ func (s *ObjectService) UploadObject(
 
 	return object, nil
 }
+
+func (s *ObjectService) GetObject(
+	ctx context.Context,
+	bucketName string,
+	objectKey string,
+) (*models.Object, error) {
+
+	bucket, err := s.buckets.FindByName(ctx, bucketName)
+	if err != nil {
+		return nil, err
+	}
+	if bucket == nil {
+		return nil, ErrBucketNotFound
+	}
+
+	object, err := s.objects.FindByKey(
+		ctx,
+		bucket.ID,
+		objectKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return object, nil
+}
+
+func (s *ObjectService) OpenObjectFile(
+	storagePath string,
+) (io.ReadCloser, error) {
+
+	return s.storage.Open(storagePath)
+}
