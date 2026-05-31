@@ -17,6 +17,7 @@ import (
 func main() {
 
 	cfg := config.Load()
+	config.InitLogger()
 
 	db, err := database.NewPostgres(cfg)
 	if err != nil {
