@@ -13,6 +13,7 @@ import (
 	"github.com/darlingson/Oort-Object-Storage/internal/storage/models"
 	"github.com/darlingson/Oort-Object-Storage/internal/storage/repositories"
 	"github.com/darlingson/Oort-Object-Storage/internal/storage/filesystem"
+	"github.com/darlingson/Oort-Object-Storage/internal/config"
 )
 
 var ErrBucketNotFound = errors.New("bucket not found")
@@ -81,6 +82,11 @@ func (s *ObjectService) UploadObject(
 	_ = s.objects.DeleteByKey(ctx, bucket.ID, objectKey)
 	err = s.objects.Create(ctx, object)
 	if err != nil {
+		cleanupErr := s.storage.Delete(storagePath)
+		if cleanupErr != nil {
+			config.AppLogger.Printf("File cleanup error: %v", err)
+			return nil, cleanupErr
+		}
 		return nil, err
 	}
 
