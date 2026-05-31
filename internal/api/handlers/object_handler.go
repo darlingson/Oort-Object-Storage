@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/darlingson/Oort-Object-Storage/internal/config"
 	"github.com/darlingson/Oort-Object-Storage/internal/services"
 )
 
@@ -49,11 +50,7 @@ func (h *ObjectHandler) UploadObject(
 	)
 
 	if err != nil {
-		if err == services.ErrBucketNotFound {
-			http.Error(w, "bucket not found", http.StatusNotFound)
-			return
-		}
-
+		config.AppLogger.Printf("upload error: %v", err)
 		http.Error(w, "upload failed", http.StatusInternalServerError)
 		return
 	}
