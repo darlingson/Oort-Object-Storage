@@ -27,6 +27,7 @@ func SetupRoutes(
 		r.Put("/*", objectHandler.UploadObject)
 		r.Get("/*", objectHandler.DownloadObject)
 		r.Delete("/*", objectHandler.DeleteObject)
+		r.Get("/", objectHandler.ListObjects)
 	})
 
 	return r

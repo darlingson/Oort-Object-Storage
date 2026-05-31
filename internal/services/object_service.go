@@ -194,3 +194,19 @@ func (s *ObjectService) DeleteObject(
 
 	return nil
 }
+
+func (s *ObjectService) ListObjects(
+	ctx context.Context,
+	bucketName string,
+) ([]models.Object, error) {
+
+	bucket, err := s.buckets.FindByName(ctx, bucketName)
+	if err != nil {
+		return nil, err
+	}
+	if bucket == nil {
+		return nil, ErrBucketNotFound
+	}
+
+	return s.objects.ListByBucket(ctx, bucket.ID)
+}

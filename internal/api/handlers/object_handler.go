@@ -131,3 +131,20 @@ func (h *ObjectHandler) DeleteObject(
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (h *ObjectHandler) ListObjects(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+
+	bucket := chi.URLParam(r, "bucket")
+
+	objects, err := h.service.ListObjects(r.Context(), bucket)
+	if err != nil {
+		http.Error(w, "failed to list objects", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(objects)
+}
