@@ -1,5 +1,10 @@
+package filesystem
+
+import "io"
+import "os"
+
 type StorageDriver interface {
-    Save(reader io.Reader) (string, error)
-    Delete(path string) error
-    Open(path string) (*os.File, error)
+	Save(file io.Reader) (string, error)
+	Open(path string) (*os.File, error)
+	Delete(path string) error
 }

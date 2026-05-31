@@ -8,6 +8,9 @@ import (
 	"github.com/darlingson/Oort-Object-Storage/internal/config"
 	"github.com/darlingson/Oort-Object-Storage/internal/database"
 	"github.com/darlingson/Oort-Object-Storage/internal/database/migrations"
+	"github.com/darlingson/Oort-Object-Storage/internal/services"
+	"github.com/darlingson/Oort-Object-Storage/internal/storage/repositories"
+	"github.com/darlingson/Oort-Object-Storage/internal/api/handlers"
 )
 
 func main() {
@@ -26,7 +29,17 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
-	router := routes.SetupRoutes()
+	repo := repositories.NewPostgresBucketRepository(db)
+
+	bucketService := services.NewBucketService(repo)
+
+	bucketHandler := handlers.NewBucketHandler(
+		bucketService,
+	)
+
+	router := routes.SetupRoutes(
+		bucketHandler,
+	)
 
 	log.Printf("server starting on port %s", cfg.AppPort)
 
