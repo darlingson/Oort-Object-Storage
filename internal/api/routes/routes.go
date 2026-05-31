@@ -24,8 +24,10 @@ func SetupRoutes(
 	})
 
 	r.Route("/buckets/{bucket}/objects", func(r chi.Router) {
-		r.Put("/{key}", objectHandler.UploadObject)
-		r.Get("/{key}", objectHandler.DownloadObject)
+		r.Put("/*", objectHandler.UploadObject)
+		r.Get("/*", objectHandler.DownloadObject)
+		r.Delete("/*", objectHandler.DeleteObject)
+		r.Get("/", objectHandler.ListObjects)
 	})
 
 	return r

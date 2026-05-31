@@ -29,7 +29,7 @@ func (h *ObjectHandler) UploadObject(
 ) {
 
 	bucket := chi.URLParam(r, "bucket")
-	key := chi.URLParam(r, "key")
+	key := chi.URLParam(r, "*")
 
 	r.ParseMultipartForm(10 << 20)
 
@@ -67,7 +67,7 @@ func (h *ObjectHandler) DownloadObject(
 ) {
 
 	bucket := chi.URLParam(r, "bucket")
-	key := chi.URLParam(r, "key")
+	key := chi.URLParam(r, "*")
 
 	obj, err := h.service.GetObject(
 		r.Context(),
@@ -94,4 +94,57 @@ func (h *ObjectHandler) DownloadObject(
 	w.WriteHeader(http.StatusOK)
 
 	io.Copy(w, file)
+}
+
+func (h *ObjectHandler) DeleteObject(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+
+	bucket := chi.URLParam(r, "bucket")
+	key := chi.URLParam(r, "*")
+
+	err := h.service.DeleteObject(
+		r.Context(),
+		bucket,
+		key,
+	)
+
+	if err != nil {
+
+		if err == services.ErrBucketNotFound {
+			http.Error(
+				w,
+				"bucket not found",
+				http.StatusNotFound,
+			)
+			return
+		}
+
+		http.Error(
+			w,
+			"delete failed",
+			http.StatusInternalServerError,
+		)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ObjectHandler) ListObjects(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+
+	bucket := chi.URLParam(r, "bucket")
+
+	objects, err := h.service.ListObjects(r.Context(), bucket)
+	if err != nil {
+		http.Error(w, "failed to list objects", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(objects)
 }

@@ -149,3 +149,64 @@ func (s *ObjectService) OpenObjectFile(
 
 	return s.storage.Open(storagePath)
 }
+
+func (s *ObjectService) DeleteObject(
+	ctx context.Context,
+	bucketName string,
+	objectKey string,
+) error {
+
+	bucket, err := s.buckets.FindByName(
+		ctx,
+		bucketName,
+	)
+	if err != nil {
+		return err
+	}
+
+	if bucket == nil {
+		return ErrBucketNotFound
+	}
+
+	object, err := s.objects.FindByKey(
+		ctx,
+		bucket.ID,
+		objectKey,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = s.storage.Delete(
+		object.StoragePath,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = s.objects.Delete(
+		ctx,
+		object.ID,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *ObjectService) ListObjects(
+	ctx context.Context,
+	bucketName string,
+) ([]models.Object, error) {
+
+	bucket, err := s.buckets.FindByName(ctx, bucketName)
+	if err != nil {
+		return nil, err
+	}
+	if bucket == nil {
+		return nil, ErrBucketNotFound
+	}
+
+	return s.objects.ListByBucket(ctx, bucket.ID)
+}
