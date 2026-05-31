@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/google/uuid"
@@ -30,24 +31,28 @@ func (s *BucketService) CreateBucket(
 	name string,
 ) (*models.Bucket, error) {
 
-	existing, _ := s.repo.FindByName(ctx, name)
+	bucket, err := s.repo.FindByName(ctx, name)
 
-	if existing != nil {
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	if bucket != nil {
 		return nil, ErrBucketExists
 	}
 
-	bucket := &models.Bucket{
+	newBucket := &models.Bucket{
 		ID:   uuid.New(),
 		Name: name,
 	}
 
-	err := s.repo.Create(ctx, bucket)
+	err = s.repo.Create(ctx, newBucket)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return bucket, nil
+	return newBucket, nil
 }
 
 func (s *BucketService) GetBucket(
