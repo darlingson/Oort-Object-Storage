@@ -25,6 +25,12 @@ type ObjectRepository interface {
 		id uuid.UUID,
 	) error
 
+	DeleteByKey(
+		ctx context.Context,
+		bucketID uuid.UUID,
+		key string,
+	) error
+
 	ListByBucket(
 		ctx context.Context,
 		bucketID uuid.UUID,

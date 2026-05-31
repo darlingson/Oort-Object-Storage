@@ -78,6 +78,7 @@ func (s *ObjectService) UploadObject(
 		Checksum:    checksum,
 	}
 
+	_ = s.objects.DeleteByKey(ctx, bucket.ID, objectKey)
 	err = s.objects.Create(ctx, object)
 	if err != nil {
 		return nil, err

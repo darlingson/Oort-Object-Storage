@@ -177,3 +177,19 @@ func (r *PostgresObjectRepository) ListByBucket(
 
 	return objects, nil
 }
+
+func (r *PostgresObjectRepository) DeleteByKey(
+	ctx context.Context,
+	bucketID uuid.UUID,
+	key string,
+) error {
+
+	_, err := r.db.ExecContext(
+		ctx,
+		`DELETE FROM objects WHERE bucket_id = $1 AND object_key = $2`,
+		bucketID,
+		key,
+	)
+
+	return err
+}
