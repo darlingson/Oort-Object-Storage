@@ -13,7 +13,10 @@ type ObjectRepository interface {
 		ctx context.Context,
 		object *models.Object,
 	) error
-
+	Upsert(
+		ctx context.Context,
+		object *models.Object,
+	) error
 	FindByKey(
 		ctx context.Context,
 		bucketID uuid.UUID,

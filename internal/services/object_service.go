@@ -69,25 +69,49 @@ func (s *ObjectService) UploadObject(
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 
-	object := &models.Object{
-		ID:          id,
-		BucketID:    bucket.ID,
-		ObjectKey:   objectKey,
-		StoragePath: storagePath,
-		ContentType: contentType,
-		SizeBytes:   size,
-		Checksum:    checksum,
+	existingObject, _ := s.objects.FindByKey(
+	ctx,
+	bucket.ID,
+	objectKey,
+)
+
+object := &models.Object{
+	ID:          id,
+	BucketID:    bucket.ID,
+	ObjectKey:   objectKey,
+	StoragePath: storagePath,
+	ContentType: contentType,
+	SizeBytes:   size,
+	Checksum:    checksum,
+}
+
+	err = s.objects.Upsert(ctx, object)
+	if err != nil {
+
+		cleanupErr := s.storage.Delete(storagePath)
+
+		if cleanupErr != nil {
+			config.AppLogger.Printf(
+				"cleanup failed after db error: %v",
+				cleanupErr,
+			)
+		}
+
+		return nil, err
 	}
 
-	_ = s.objects.DeleteByKey(ctx, bucket.ID, objectKey)
-	err = s.objects.Create(ctx, object)
-	if err != nil {
-		cleanupErr := s.storage.Delete(storagePath)
-		if cleanupErr != nil {
-			config.AppLogger.Printf("File cleanup error: %v", err)
-			return nil, cleanupErr
+	if existingObject != nil {
+
+		err = s.storage.Delete(
+			existingObject.StoragePath,
+		)
+
+		if err != nil {
+			config.AppLogger.Printf(
+				"failed removing old file: %v",
+				err,
+			)
 		}
-		return nil, err
 	}
 
 	return object, nil

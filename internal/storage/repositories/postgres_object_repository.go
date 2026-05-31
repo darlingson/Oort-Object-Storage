@@ -54,6 +54,46 @@ func (r *PostgresObjectRepository) Create(
 	return err
 }
 
+func (r *PostgresObjectRepository) Upsert(
+	ctx context.Context,
+	object *models.Object,
+) error {
+
+	query := `
+	INSERT INTO objects (
+		id,
+		bucket_id,
+		object_key,
+		storage_path,
+		content_type,
+		size_bytes,
+		checksum
+	)
+	VALUES ($1,$2,$3,$4,$5,$6,$7)
+	ON CONFLICT (bucket_id, object_key)
+	DO UPDATE SET
+		id = EXCLUDED.id,
+		storage_path = EXCLUDED.storage_path,
+		content_type = EXCLUDED.content_type,
+		size_bytes = EXCLUDED.size_bytes,
+		checksum = EXCLUDED.checksum
+	`
+
+	_, err := r.db.ExecContext(
+		ctx,
+		query,
+		object.ID,
+		object.BucketID,
+		object.ObjectKey,
+		object.StoragePath,
+		object.ContentType,
+		object.SizeBytes,
+		object.Checksum,
+	)
+
+	return err
+}
+
 func (r *PostgresObjectRepository) FindByKey(
 	ctx context.Context,
 	bucketID uuid.UUID,
