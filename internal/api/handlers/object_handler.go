@@ -29,7 +29,7 @@ func (h *ObjectHandler) UploadObject(
 ) {
 
 	bucket := chi.URLParam(r, "bucket")
-	key := chi.URLParam(r, "key")
+	key := chi.URLParam(r, "*")
 
 	r.ParseMultipartForm(10 << 20)
 
@@ -67,7 +67,7 @@ func (h *ObjectHandler) DownloadObject(
 ) {
 
 	bucket := chi.URLParam(r, "bucket")
-	key := chi.URLParam(r, "key")
+	key := chi.URLParam(r, "*")
 
 	obj, err := h.service.GetObject(
 		r.Context(),
@@ -102,7 +102,7 @@ func (h *ObjectHandler) DeleteObject(
 ) {
 
 	bucket := chi.URLParam(r, "bucket")
-	key := chi.URLParam(r, "key")
+	key := chi.URLParam(r, "*")
 
 	err := h.service.DeleteObject(
 		r.Context(),
