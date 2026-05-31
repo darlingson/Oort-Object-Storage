@@ -49,3 +49,18 @@ func (s *BucketService) CreateBucket(
 
 	return bucket, nil
 }
+
+func (s *BucketService) GetBucket(
+	ctx context.Context,
+	name string,
+) (*models.Bucket, error) {
+
+	return s.repo.FindByName(ctx, name)
+}
+
+func (s *BucketService) ListBuckets(
+	ctx context.Context,
+) ([]models.Bucket, error) {
+
+	return s.repo.List(ctx)
+}
