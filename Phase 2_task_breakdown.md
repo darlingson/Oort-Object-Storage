@@ -87,7 +87,7 @@ Without API keys:
 
 * Anyone can upload
 * Anyone can delete
-* No ownership model
+* No access boundaries
 
 ---
 
@@ -104,10 +104,19 @@ type APIKey struct {
     ID          uuid.UUID
     Name        string
     KeyHash     string
+    Buckets     []string // bucket allowlist; ["*"] = full access
     CreatedAt   time.Time
     LastUsedAt  *time.Time
 }
 ```
+
+The `Buckets` field is the isolation mechanism. Examples:
+
+| Key Name        | Buckets              | Can Access                     |
+|-----------------|----------------------|--------------------------------|
+| contracts-svc   | ["contracts"]        | contracts bucket only          |
+| kyc-svc         | ["kyc-uploads"]      | kyc-uploads bucket only        |
+| admin           | ["*"]                | everything                     |
 
 ---
 
@@ -115,7 +124,7 @@ type APIKey struct {
 
 Responsibilities:
 
-* Create key
+* Create key (with bucket allowlist)
 * Find by hash
 * List keys
 * Delete key
@@ -123,11 +132,26 @@ Responsibilities:
 Methods:
 
 ```go
-Create(...)
-FindByHash(...)
-List(...)
-Delete(...)
+Create(ctx, key *APIKey) error
+FindByHash(ctx, hash string) (*APIKey, error)
+List(ctx) ([]APIKey, error)
+Delete(ctx, id uuid.UUID) error
 ```
+
+**Migration:**
+
+```sql
+CREATE TABLE api_keys (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    key_hash TEXT UNIQUE NOT NULL,
+    buckets TEXT[] NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_used_at TIMESTAMP
+);
+```
+
+Store `Buckets` as a Postgres text array. `{"*"}` means unrestricted.
 
 ---
 
@@ -135,10 +159,24 @@ Delete(...)
 
 Business Rules:
 
-* Generate secure keys
+* Generate secure keys (`oort_` prefix + 32 random bytes -> base64)
 * Never store raw key
 * Store SHA256 hash only
-* Return raw key once
+* Return raw key once on creation
+* Validate bucket access: given a key and a bucket name, does the key's allowlist permit it?
+
+**Key method:**
+
+```go
+func (s *KeyService) CanAccessBucket(key *APIKey, bucketName string) bool {
+    for _, allowed := range key.Buckets {
+        if allowed == "*" || allowed == bucketName {
+            return true
+        }
+    }
+    return false
+}
+```
 
 Example:
 
@@ -152,11 +190,32 @@ oort_f3b2f8...
 
 Endpoints:
 
-| Method | Endpoint       |
-| ------ | -------------- |
-| POST   | /api-keys      |
-| GET    | /api-keys      |
-| DELETE | /api-keys/{id} |
+| Method | Endpoint         | Description                            |
+| ------ | ---------------- | -------------------------------------- |
+| POST   | /api-keys        | Create key (body: `{name, buckets}`)   |
+| GET    | /api-keys        | List keys (never expose key_hash)      |
+| DELETE | /api-keys/{id}   | Delete key                             |
+
+**POST body example:**
+
+```json
+{
+  "name": "kyc-service",
+  "buckets": ["kyc-uploads"]
+}
+```
+
+**POST response (raw key shown once):**
+
+```json
+{
+  "id": "uuid...",
+  "name": "kyc-service",
+  "buckets": ["kyc-uploads"],
+  "raw_key": "oort_f3b2f8...",
+  "created_at": "..."
+}
+```
 
 ---
 
@@ -164,16 +223,18 @@ Endpoints:
 
 Verify:
 
-* Key creation
-* Hash stored
-* Raw key not stored
+* Key creation returns raw key once
+* Hash stored, raw key not retrievable via GET
+* Bucket allowlist stored and returned
+* Wildcard `["*"]` permits all buckets
 * Delete works
+* Duplicate name allowed (keys identified by ID)
 
 ---
 
 # Epic 2 — Authentication Middleware
 
-Protect write operations.
+Protect write operations **and enforce bucket scoping**.
 
 ---
 
@@ -182,8 +243,24 @@ Protect write operations.
 Responsibilities:
 
 * Read Authorization header
-* Validate API key
-* Attach identity to request context
+* Validate API key (find by hash)
+* Attach resolved key to request context
+* Middleware runs on **all** routes (even public ones can skip by not passing a key)
+
+**Context key:**
+
+```go
+type contextKey string
+const KeyContextKey = contextKey("api_key")
+
+func GetAPIKey(ctx context.Context) *models.APIKey {
+    val := ctx.Value(KeyContextKey)
+    if val == nil {
+        return nil
+    }
+    return val.(*models.APIKey)
+}
+```
 
 Example:
 
@@ -193,7 +270,49 @@ Authorization: Bearer oort_xxx
 
 ---
 
-## Task 2.2 — Route Protection
+## Task 2.2 — Bucket Access Enforcer
+
+Separate middleware that runs after authentication **on bucket-scoped routes**.
+
+Responsibilities:
+
+* Extract `{bucket}` from the URL path
+* Get the API key from context
+* Call `CanAccessBucket(key, bucketName)`
+* Reject with 403 if the key's allowlist doesn't include the bucket
+
+**Logic:**
+
+```
+Request: PUT /buckets/contracts/objects/report.pdf
+    |
+    v
+Authenticate -> key found (contracts-svc)
+    |
+    v
+Enforce Scope -> key.Buckets = ["contracts"]
+                  bucket in path = "contracts"
+                  "contracts" in ["contracts"] -> allow
+    |
+    v
+Handler runs
+
+---
+
+Request: PUT /buckets/kyc-uploads/objects/photo.jpg
+    |
+    v
+Authenticate -> same key (contracts-svc)
+    |
+    v
+Enforce Scope -> key.Buckets = ["contracts"]
+                  bucket in path = "kyc-uploads"
+                  "kyc-uploads" not in ["contracts"] -> 403 Forbidden
+```
+
+---
+
+## Task 2.3 — Route Protection
 
 Require authentication for:
 
@@ -204,22 +323,28 @@ POST bucket
 DELETE bucket (future)
 ```
 
-Allow:
+Allow (no auth required):
 
 ```text
 GET health
 GET signed url downloads
 ```
 
+Bucket access enforcer runs on all authenticated bucket-scoped routes.
+
 ---
 
-## Task 2.3 — Middleware Tests
+## Task 2.4 — Middleware Tests
 
 Verify:
 
-* Missing key rejected
-* Invalid key rejected
-* Valid key accepted
+* Missing key rejected (401)
+* Invalid key rejected (401)
+* Valid key accepted (200)
+* Key with ["contracts"] can access contracts bucket
+* Key with ["contracts"] cannot access kyc-uploads bucket (403)
+* Wildcard key ["*"] can access any bucket
+* Public routes work without key
 
 ---
 
@@ -474,17 +599,18 @@ Don't jump around.
 
 ## Sprint 1
 
-* [ ] API key model
-* [ ] API key repository
-* [ ] API key service
-* [ ] API key API
+* [ ] API key model (with Buckets allowlist)
+* [ ] API key repository + migration
+* [ ] API key service (key gen, hash, CanAccessBucket)
+* [ ] API key API (POST/GET/DELETE, raw key on creation)
 * [ ] API key tests
 
 ## Sprint 2
 
-* [ ] Authentication middleware
-* [ ] Route protection
-* [ ] Middleware tests
+* [ ] Authentication middleware (validate key, attach to context)
+* [ ] Bucket access enforcer middleware (CanAccessBucket check)
+* [ ] Route protection config (public vs authenticated)
+* [ ] Middleware + enforcer tests
 
 ## Sprint 3
 
