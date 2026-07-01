@@ -33,7 +33,8 @@ func TruncateTables(t *testing.T, db *sql.DB) {
 	_, err := db.Exec(`
 		TRUNCATE TABLE
 			objects,
-			buckets
+			buckets,
+			api_keys
 		RESTART IDENTITY CASCADE
 	`)
 
