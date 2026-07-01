@@ -25,25 +25,18 @@ func SetupRoutes(
 	r.Get("/api-keys", keyHandler.ListKeys)
 	r.Delete("/api-keys/{id}", keyHandler.DeleteKey)
 
-	r.Group(func(r chi.Router) {
-		r.Use(middleware.APIKeyAuth(keyService))
-
-		r.Post("/buckets", bucketHandler.CreateBucket)
-
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.BucketScope(keyService))
-
-			r.Route("/buckets/{bucket}/objects", func(r chi.Router) {
-				r.Put("/*", objectHandler.UploadObject)
-				r.Get("/*", objectHandler.DownloadObject)
-				r.Delete("/*", objectHandler.DeleteObject)
-				r.Get("/", objectHandler.ListObjects)
-			})
-		})
-	})
-
+	r.Post("/buckets", bucketHandler.CreateBucket)
 	r.Get("/buckets", bucketHandler.ListBuckets)
 	r.Get("/buckets/{name}", bucketHandler.GetBucket)
+
+	r.Route("/buckets/{bucket}/objects", func(r chi.Router) {
+		r.Use(middleware.BucketScope(keyService))
+
+		r.Put("/*", objectHandler.UploadObject)
+		r.Get("/*", objectHandler.DownloadObject)
+		r.Delete("/*", objectHandler.DeleteObject)
+		r.Get("/", objectHandler.ListObjects)
+	})
 
 	return r
 }
