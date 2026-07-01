@@ -48,9 +48,14 @@ func main() {
 	objectHandler := handlers.NewObjectHandler(objectService)
 
 
+	keyRepo := repositories.NewPostgresKeyRepository(db)
+	keyService := services.NewKeyService(keyRepo)
+
+
 	router := routes.SetupRoutes(
 		bucketHandler,
 		objectHandler,
+		keyService,
 	)
 
 	log.Printf("server starting on port %s", cfg.AppPort)
