@@ -13,6 +13,7 @@ import (
 func SetupRoutes(
 	bucketHandler *handlers.BucketHandler,
 	objectHandler *handlers.ObjectHandler,
+	keyHandler *handlers.KeyHandler,
 	keyService *services.KeyService,
 ) http.Handler {
 
@@ -20,8 +21,12 @@ func SetupRoutes(
 
 	r.Get("/health", handlers.HealthCheck)
 
+	r.Post("/api-keys", keyHandler.CreateKey)
+	r.Get("/api-keys", keyHandler.ListKeys)
+	r.Delete("/api-keys/{id}", keyHandler.DeleteKey)
+
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.BearerAuth(keyService))
+		r.Use(middleware.APIKeyAuth(keyService))
 
 		r.Post("/buckets", bucketHandler.CreateBucket)
 

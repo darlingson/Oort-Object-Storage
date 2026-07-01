@@ -50,11 +50,13 @@ func main() {
 
 	keyRepo := repositories.NewPostgresKeyRepository(db)
 	keyService := services.NewKeyService(keyRepo)
+	keyHandler := handlers.NewKeyHandler(keyService)
 
 
 	router := routes.SetupRoutes(
 		bucketHandler,
 		objectHandler,
+		keyHandler,
 		keyService,
 	)
 
