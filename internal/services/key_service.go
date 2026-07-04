@@ -53,12 +53,18 @@ func (s *KeyService) Create(
 	hash := sha256.Sum256([]byte(rawKey))
 	keyHash := hex.EncodeToString(hash[:])
 
+	var dbExpiresAt *time.Time
+	if expiresAt != nil {
+		u := expiresAt.UTC()
+		dbExpiresAt = &u
+	}
+
 	key := &models.APIKey{
 		ID:        uuid.New(),
 		Name:      name,
 		KeyHash:   keyHash,
 		Buckets:   buckets,
-		ExpiresAt: expiresAt,
+		ExpiresAt: dbExpiresAt,
 	}
 
 	err = s.repo.Create(ctx, key)
