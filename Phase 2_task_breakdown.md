@@ -5,31 +5,29 @@
 At the end of Phase 2, this should work:
 
 ```bash
-# Login as admin
+# Login as human admin
 curl -X POST /auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@oort.local","password":"admin123"}'
 # → { "token": "eyJhbGci..." }
 
-# Create API key (requires JWT + apikey:create permission)
+# Admin creates API key for a machine client
 curl -X POST /api-keys \
   -H "Authorization: Bearer eyJhbGci..." \
   -H "Content-Type: application/json" \
   -d '{"name":"ci-service","buckets":["artifacts"]}'
 # → { "raw_key": "oort_f3b2f8..." }
 
-# Upload using JWT auth + API key for bucket scoping
+# Machine uploads using API key (auth + scope in one)
 curl -X PUT /buckets/artifacts/objects/release.tar.gz \
-  -H "Authorization: Bearer eyJhbGci..." \
   -H "X-API-Key: oort_f3b2f8..." \
   -F "file=@release.tar.gz"
 
-# Or upload with just JWT (if user has direct bucket access)
-curl -X PUT /buckets/artifacts/objects/release.tar.gz \
-  -H "Authorization: Bearer eyJhbGci..." \
-  -F "file=@release.tar.gz"
+# Human admin downloads using JWT
+curl -X GET /buckets/artifacts/objects/release.tar.gz \
+  -H "Authorization: Bearer eyJhbGci..."
 
-# Generate signed URL
+# Generate signed URL (human only)
 curl -X POST /buckets/documents/objects/file.pdf/sign \
   -H "Authorization: Bearer eyJhbGci..."
 
@@ -39,9 +37,10 @@ curl "http://localhost:3333/download/abc123..."
 
 And:
 
-* JWT tokens authenticate requests (who you are)
-* API keys control bucket scoping (which buckets you can touch)
-* Permissions control what operations you can perform
+* **Machine clients** authenticate via API keys (`X-API-Key` header) — auth + bucket scope in one
+* **Human admins** authenticate via JWT (`Authorization: Bearer` header) — full permission-based access
+* Permissions control what operations humans can perform
+* API key management requires human JWT
 * Public signed URLs work without authentication
 * URLs expire automatically
 * Responses are consistent JSON
@@ -55,57 +54,68 @@ And:
 ```text
 Database
     |
-    +---------------------------+
-    |                           |
-    v                           v
-User Model                 API Key Model
-    |                           |
-    v                           v
-User Repository             API Key Repository
-    |                           |
-    v                           v
-User Service                API Key Service
-    |                           |
-    v                           v
-JWT Service                 Bucket Scope Middleware
-    |                           |
-    v                           v
-Auth Middleware              (uses X-API-Key header)
-    |                           |
-    v                           v
-+--- Permission Middleware ---+
-|   (checks role permissions)  |
-+------------------------------+
-    |
-    v
-Signed URLs
-    |
-    v
-Standard API Responses
-    |
-    v
-Health Endpoints
-    |
-    v
-CLI Client
+    +----------------------------+----------------------------+
+    |                            |                            |
+    v                            v                            v
+User Model                 API Key Model                Signed URL Model
+    |                            |                            |
+    v                            v                            v
+User Repository             API Key Repository           Signed URL Repo
+    |                            |                            |
+    v                            v                            v
+User Service                API Key Service              Signed URL Svc
+    |                            |                            |
+    v                            v                            v
+JWT Service              BucketScope Middleware          Signed URL API
+    |                     (machine auth + scope)
+    v                            |
+Auth Middleware                  |
+(validates JWT)                  |
+    |                            |
+    v                            |
+Permission Middleware            |
+(checks role permissions)       |
+    |                            |
+    +----------+----------------+
+               |
+               v
+         Standard API Responses
+               |
+               v
+         Health Endpoints
+               |
+               v
+         CLI Client
 ```
+
+Two parallel auth paths for different consumers:
+
+| Path | Who | Header | Middleware |
+|------|-----|--------|------------|
+| **Machine** | CI pipelines, microservices, apps | `X-API-Key` | `BucketScope` handles both auth + bucket scoping |
+| **Human** | Admins, ops team | `Authorization: Bearer <JWT>` | `Auth` → `RequirePermission` |
 
 ---
 
-# Epic 1 — API Keys (Scope Controller)
+# Epic 1 — API Keys (Machine Auth + Scope Controller)
 
-API keys no longer authenticate. They control **which buckets** a request can access.
+API keys are the primary credential for **machine-to-machine** communication.
+
+They do double duty:
+
+1. **Authenticate** the machine client (who is making the request)
+2. **Scope** the request to allowed buckets (which buckets can be accessed)
 
 Without API keys:
 
-* JWT-authenticated users access buckets based on their permissions
-* No per-integration bucket isolation
+* Machines cannot interact with Oort at all
+* Only human JWT users can operate
 
 With API keys:
 
-* Integrations get scoped to specific buckets
-* Keys act as a bucket allowlist filter on top of JWT auth
-* A request can include both `Authorization: Bearer <JWT>` and `X-API-Key: <key>`
+* Integrations (CI, microservices, apps) can upload/download/delete objects
+* Each key is scoped to a specific set of buckets
+* A machine uses `X-API-Key: oort_xxx` — no JWT needed
 
 ---
 
@@ -516,52 +526,88 @@ Verify:
 
 ---
 
-# Epic 4 — Bucket Scope Middleware
+# Epic 4 — Bucket Scope Middleware (Machine Auth)
 
-Refactor the existing `BucketScope` middleware to be a pure scope controller (no auth).
+The existing `BucketScope` middleware already handles machine auth + bucket scoping in one middleware. It stays intact as the **machine auth path**.
 
 ---
 
-## Task 4.1 — Refactor Scope Middleware
+## Task 4.1 — Combined Auth Middleware (Object Routes)
 
-Current `scope.go` does both auth + bucket-scoping. Split into:
+Object routes need to accept **either** an API key (machine) or a JWT (human).
 
-1. **Auth middleware** — JWT validation (Epic 2)
-2. **BucketScope middleware** — reads `X-API-Key`, validates, checks bucket access
+Create a combined middleware that tries both paths:
 
-The new BucketScope middleware:
+```go
+func ObjectAccess(keyService, jwtService) func(http.Handler) http.Handler
+```
 
-* Reads `X-API-Key` header (optional)
-* If present, validates the key and checks `CanAccessBucket`
-* If absent, skips scope check (JWT permissions alone are sufficient)
-* If key present but bucket not allowed, rejects with 403
+Logic:
+
+```
+if X-API-Key header present:
+    validate key (FindByHash)
+    check bucket scope (CanAccessBucket)
+    → pass to handler
+
+if Authorization: Bearer header present:
+    validate JWT
+    check permission (object:upload/download/delete/list)
+    → pass to handler
+
+if neither: 401 Unauthorized
+```
+
+This avoids duplicate route registration — one route handles both auth paths.
 
 ---
 
 ## Task 4.2 — Route Protection
 
-Final middleware stack per route group:
+Middleware stack per route group:
 
 ```text
-/buckets/{bucket}/objects/* -> Auth -> RequirePermission -> BucketScope -> Handler
-/buckets/*                  -> Auth -> RequirePermission -> Handler
-/api-keys/*                 -> Auth -> RequirePermission -> Handler
-/auth/*                     -> (no middleware)
-/health                     -> (no middleware)
+/buckets/{bucket}/objects/*  →  ObjectAccess(keyService, jwtService)  →  Handler
+/buckets/*                   →  Auth → RequirePermission(bucket:*)    →  Handler
+/api-keys/*                  →  Auth → RequirePermission(apikey:*)    →  Handler
+/auth/*                      →  (no middleware)
+/health                      →  (no middleware)
+/download/{token}            →  (no middleware — signed URL)
 ```
+
+**Route protection matrix:**
+
+| Endpoint | Auth | Permission | Scope |
+|----------|------|------------|-------|
+| `GET /health` | ❌ | ❌ | ❌ |
+| `POST /auth/login` | ❌ | ❌ | ❌ |
+| `POST /buckets` | ✅ JWT | `bucket:create` | ❌ |
+| `GET /buckets` | ✅ JWT | `bucket:list` | ❌ |
+| `GET /buckets/{name}` | ✅ JWT | `bucket:list` | ❌ |
+| `PUT /buckets/{bucket}/objects/*` | ✅ API key or JWT | `object:upload` (JWT) | ✅ API key |
+| `GET /buckets/{bucket}/objects/*` | ✅ API key or JWT | `object:download` (JWT) | ✅ API key |
+| `DELETE /buckets/{bucket}/objects/*` | ✅ API key or JWT | `object:delete` (JWT) | ✅ API key |
+| `GET /buckets/{bucket}/objects/` | ✅ API key or JWT | `object:list` (JWT) | ✅ API key |
+| `POST /api-keys` | ✅ JWT | `apikey:create` | ❌ |
+| `GET /api-keys` | ✅ JWT | `apikey:list` | ❌ |
+| `DELETE /api-keys/{id}` | ✅ JWT | `apikey:delete` | ❌ |
 
 ---
 
-## Task 4.3 — Scope Tests (Updated)
+## Task 4.3 — Scope & Combined Auth Tests
 
 Verify:
 
-* Valid API key + correct bucket passes scope check
-* Valid API key + wrong bucket rejected (403)
-* Invalid API key rejected (403)
-* Expired API key rejected (403)
-* Missing API key (with valid JWT) passes scope check (scope is optional)
-* Wildcard key works
+* **API key path**: valid key + correct bucket → 200
+* **API key path**: valid key + wrong bucket → 403
+* **API key path**: invalid key → 403
+* **API key path**: expired key → 403
+* **JWT path**: valid JWT + correct permission → 200
+* **JWT path**: valid JWT + wrong permission → 403
+* **JWT path**: invalid JWT → 401
+* **JWT path**: expired JWT → 401
+* **Neither**: missing both headers → 401
+* **Wildcard key**: works for any bucket
 
 ---
 
@@ -839,37 +885,37 @@ Verify:
 * [x] Bucket scope middleware tests (`scope_test.go`)
 * [x] Fix expired key UTC bug in key service
 
-## Sprint 3 — JWT Auth Foundation
+## Sprint 3 — JWT Auth Foundation (Human Auth)
 
-* [ ] Migration 0004: users table
-* [ ] User model
-* [ ] User repository + Postgres implementation
-* [ ] User service (register, login with bcrypt)
-* [ ] JWT service (sign, validate, extract claims)
 * [ ] Dependencies: `golang-jwt/jwt/v5`, `golang.org/x/crypto`
-* [ ] Auth handler: POST /auth/login
-* [ ] Auth middleware: validate JWT, attach to context
 * [ ] Config: JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
+* [ ] Migration 0004: users table
+* [ ] User model (`internal/storage/models/user.go`)
+* [ ] User repository + Postgres implementation
+* [ ] User service (login with bcrypt, get by ID)
+* [ ] JWT service (sign, validate, extract claims)
+* [ ] Auth handler: POST /auth/login → returns JWT
+* [ ] Auth middleware: validate JWT, attach user + permissions to context
 * [ ] First-run admin seeding in main.go
 * [ ] Auth tests
 
 ## Sprint 4 — Permissions / RBAC
 
-* [ ] Permission constants
+* [ ] Permission constants (bucket:create, bucket:list, object:upload, etc.)
 * [ ] Migration 0005: roles + user_roles tables
 * [ ] Role model + repository + Postgres implementation
-* [ ] Role service (assign to user, get permissions)
-* [ ] Permission middleware (RequirePermission)
-* [ ] Seed admin role with all permissions
+* [ ] Permission middleware (`RequirePermission(perm)`)
+* [ ] Admin role with all permissions + default machine role with object perms
 * [ ] Permission tests
 
-## Sprint 5 — Scope Refactor + Route Protection
+## Sprint 5 — Combined Object Auth Middleware
 
-* [ ] Refactor BucketScope middleware (remove auth, keep scope)
-* [ ] Apply Auth + Permission + Scope middleware to all routes
-* [ ] Protect /buckets endpoints
-* [ ] Protect /api-keys endpoints
-* [ ] Updated scope tests
+* [ ] Create `ObjectAccess` middleware (tries API key first, falls back to JWT)
+* [ ] Same middleware handles both auth paths for object routes
+* [ ] Scope middleware tests still pass
+* [ ] Combined auth tests
+* [ ] Protect /buckets management routes with JWT + permissions
+* [ ] Protect /api-keys routes with JWT + permissions
 
 ## Sprint 6 — Signed URLs
 
