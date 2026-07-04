@@ -66,12 +66,16 @@ func main() {
 	authHandler := handlers.NewAuthHandler(userService, jwtService)
 	userHandler := handlers.NewUserHandler(userService, permissionRepo)
 
+	healthService := services.NewHealthService(db, "./data/blobs")
+	healthHandler := handlers.NewHealthHandler(healthService)
+
 	router := routes.SetupRoutes(
 		bucketHandler,
 		objectHandler,
 		keyHandler,
 		authHandler,
 		userHandler,
+		healthHandler,
 		keyService,
 		jwtService,
 	)

@@ -16,6 +16,7 @@ func SetupRoutes(
 	keyHandler *handlers.KeyHandler,
 	authHandler *handlers.AuthHandler,
 	userHandler *handlers.UserHandler,
+	healthHandler *handlers.HealthHandler,
 	keyService *services.KeyService,
 	jwtService *services.JWTService,
 ) http.Handler {
@@ -23,6 +24,8 @@ func SetupRoutes(
 	r := chi.NewRouter()
 
 	r.Get("/health", handlers.HealthCheck)
+	r.Get("/health/live", healthHandler.Live)
+	r.Get("/health/ready", healthHandler.Ready)
 
 	r.Post("/auth/login", authHandler.Login)
 
