@@ -26,30 +26,45 @@ func SetupRoutes(
 
 	r.Post("/auth/login", authHandler.Login)
 
-	r.Route("/users", func(r chi.Router) {
-		r.Use(middleware.Auth(jwtService))
-		r.Use(middleware.RequirePermission("user:create"))
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("user:create"),
+	).Post("/users", userHandler.CreateUser)
 
-		r.Post("/", userHandler.CreateUser)
-	})
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("user:grant-permission"),
+	).Post("/users/{id}/permissions", userHandler.GrantPermission)
 
-	r.Route("/api-keys", func(r chi.Router) {
-		r.Use(middleware.Auth(jwtService))
-		r.Use(middleware.RequirePermission("apikey:create"))
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("apikey:create"),
+	).Post("/api-keys", keyHandler.CreateKey)
 
-		r.Post("/", keyHandler.CreateKey)
-		r.Get("/", keyHandler.ListKeys)
-		r.Delete("/{id}", keyHandler.DeleteKey)
-	})
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("apikey:list"),
+	).Get("/api-keys", keyHandler.ListKeys)
 
-	r.Route("/buckets", func(r chi.Router) {
-		r.Use(middleware.Auth(jwtService))
-		r.Use(middleware.RequirePermission("bucket:create"))
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("apikey:delete"),
+	).Delete("/api-keys/{id}", keyHandler.DeleteKey)
 
-		r.Post("/", bucketHandler.CreateBucket)
-		r.Get("/", bucketHandler.ListBuckets)
-		r.Get("/{name}", bucketHandler.GetBucket)
-	})
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("bucket:create"),
+	).Post("/buckets", bucketHandler.CreateBucket)
+
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("bucket:list"),
+	).Get("/buckets", bucketHandler.ListBuckets)
+
+	r.With(
+		middleware.Auth(jwtService),
+		middleware.RequirePermission("bucket:list"),
+	).Get("/buckets/{name}", bucketHandler.GetBucket)
 
 	r.Route("/buckets/{bucket}/objects", func(r chi.Router) {
 		r.Use(middleware.ObjectAccess(keyService, jwtService))

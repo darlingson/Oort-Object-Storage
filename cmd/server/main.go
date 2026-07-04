@@ -64,7 +64,7 @@ func main() {
 	jwtService := services.NewJWTService()
 
 	authHandler := handlers.NewAuthHandler(userService, jwtService)
-	userHandler := handlers.NewUserHandler(userService)
+	userHandler := handlers.NewUserHandler(userService, permissionRepo)
 
 	router := routes.SetupRoutes(
 		bucketHandler,

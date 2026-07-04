@@ -115,3 +115,12 @@ func (s *UserService) GetPermissions(
 
 	return s.userRepo.GetEffectivePermissions(ctx, userID)
 }
+
+func (s *UserService) AssignPermission(
+	ctx context.Context,
+	userID uuid.UUID,
+	permissionID uuid.UUID,
+) error {
+
+	return s.userRepo.AssignPermission(ctx, userID, permissionID)
+}

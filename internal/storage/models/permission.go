@@ -20,8 +20,9 @@ const (
 	PermissionAPIKeyList   = "apikey:list"
 	PermissionAPIKeyDelete = "apikey:delete"
 
-	PermissionUserCreate = "user:create"
-	PermissionUserList   = "user:list"
+	PermissionUserCreate          = "user:create"
+	PermissionUserList            = "user:list"
+	PermissionUserGrantPermission = "user:grant-permission"
 )
 
 var AllPermissionNames = []string{
@@ -37,6 +38,7 @@ var AllPermissionNames = []string{
 	PermissionAPIKeyDelete,
 	PermissionUserCreate,
 	PermissionUserList,
+	PermissionUserGrantPermission,
 }
 
 type Permission struct {
