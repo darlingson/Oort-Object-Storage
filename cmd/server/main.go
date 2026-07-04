@@ -1,17 +1,18 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
+	"github.com/darlingson/Oort-Object-Storage/internal/api/handlers"
 	"github.com/darlingson/Oort-Object-Storage/internal/api/routes"
 	"github.com/darlingson/Oort-Object-Storage/internal/config"
 	"github.com/darlingson/Oort-Object-Storage/internal/database"
 	"github.com/darlingson/Oort-Object-Storage/internal/database/migrations"
 	"github.com/darlingson/Oort-Object-Storage/internal/services"
-	"github.com/darlingson/Oort-Object-Storage/internal/storage/repositories"
-	"github.com/darlingson/Oort-Object-Storage/internal/api/handlers"
 	"github.com/darlingson/Oort-Object-Storage/internal/storage/filesystem"
+	"github.com/darlingson/Oort-Object-Storage/internal/storage/repositories"
 )
 
 func main() {
@@ -31,12 +32,20 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
+	permissionRepo := repositories.NewPostgresPermissionRepository(db)
+	roleRepo := repositories.NewPostgresRoleRepository(db)
+	userRepo := repositories.NewPostgresUserRepository(db)
+
+	seedSvc := services.NewSeedService(
+		permissionRepo,
+		roleRepo,
+		userRepo,
+	)
+	seedSvc.SeedIfNeeded(context.Background())
+
 	bucketRepo := repositories.NewPostgresBucketRepository(db)
 	bucketService := services.NewBucketService(bucketRepo)
-	bucketHandler := handlers.NewBucketHandler(
-		bucketService,
-	)
-
+	bucketHandler := handlers.NewBucketHandler(bucketService)
 
 	filesystemDriver := filesystem.NewLocalDriver("./data/blobs")
 	objectRepo := repositories.NewPostgresObjectRepository(db)
@@ -47,17 +56,24 @@ func main() {
 	)
 	objectHandler := handlers.NewObjectHandler(objectService)
 
-
 	keyRepo := repositories.NewPostgresKeyRepository(db)
 	keyService := services.NewKeyService(keyRepo)
 	keyHandler := handlers.NewKeyHandler(keyService)
 
+	userService := services.NewUserService(userRepo)
+	jwtService := services.NewJWTService()
+
+	authHandler := handlers.NewAuthHandler(userService, jwtService)
+	userHandler := handlers.NewUserHandler(userService)
 
 	router := routes.SetupRoutes(
 		bucketHandler,
 		objectHandler,
 		keyHandler,
+		authHandler,
+		userHandler,
 		keyService,
+		jwtService,
 	)
 
 	log.Printf("server starting on port %s", cfg.AppPort)

@@ -32,6 +32,12 @@ func TruncateTables(t *testing.T, db *sql.DB) {
 
 	_, err := db.Exec(`
 		TRUNCATE TABLE
+			user_permissions,
+			user_roles,
+			role_permissions,
+			permissions,
+			roles,
+			users,
 			objects,
 			buckets,
 			api_keys
