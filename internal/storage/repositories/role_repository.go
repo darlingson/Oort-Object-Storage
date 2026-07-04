@@ -14,4 +14,5 @@ type RoleRepository interface {
 	FindByUserID(ctx context.Context, userID uuid.UUID) ([]models.Role, error)
 	AssignPermission(ctx context.Context, roleID, permissionID uuid.UUID) error
 	ListPermissions(ctx context.Context, roleID uuid.UUID) ([]models.Permission, error)
+	AssignToUser(ctx context.Context, userID, roleID uuid.UUID) error
 }
