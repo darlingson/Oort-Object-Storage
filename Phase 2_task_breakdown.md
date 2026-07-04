@@ -1,31 +1,47 @@
-# Oort — Developer Experience
+# Oort — Developer Experience (Phase 2)
 
 ## Phase 2 Goal
 
 At the end of Phase 2, this should work:
 
 ```bash
-# Create API key
-curl -X POST \
-  /api-keys
+# Login as admin
+curl -X POST /auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@oort.local","password":"admin123"}'
+# → { "token": "eyJhbGci..." }
 
-# Upload using API key
-curl -H "Authorization: Bearer oort_xxxxx" \
-  -X PUT \
-  /buckets/documents/objects/file.pdf
+# Create API key (requires JWT + apikey:create permission)
+curl -X POST /api-keys \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ci-service","buckets":["artifacts"]}'
+# → { "raw_key": "oort_f3b2f8..." }
+
+# Upload using JWT auth + API key for bucket scoping
+curl -X PUT /buckets/artifacts/objects/release.tar.gz \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -H "X-API-Key: oort_f3b2f8..." \
+  -F "file=@release.tar.gz"
+
+# Or upload with just JWT (if user has direct bucket access)
+curl -X PUT /buckets/artifacts/objects/release.tar.gz \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -F "file=@release.tar.gz"
 
 # Generate signed URL
-curl -X POST \
-  /buckets/documents/objects/file.pdf/sign
+curl -X POST /buckets/documents/objects/file.pdf/sign \
+  -H "Authorization: Bearer eyJhbGci..."
 
-# Download using signed URL
-curl \
-  "http://localhost:3333/download/abc123..."
+# Download using signed URL (no auth)
+curl "http://localhost:3333/download/abc123..."
 ```
 
 And:
 
-* API keys authenticate requests
+* JWT tokens authenticate requests (who you are)
+* API keys control bucket scoping (which buckets you can touch)
+* Permissions control what operations you can perform
 * Public signed URLs work without authentication
 * URLs expire automatically
 * Responses are consistent JSON
@@ -39,33 +55,30 @@ And:
 ```text
 Database
     |
-    v
-API Key Model
-    |
-    v
-API Key Repository
-    |
-    v
-API Key Service
-    |
-    v
-Authentication Middleware
-    |
     +---------------------------+
     |                           |
-    v                           |
-Signed URL Model               |
+    v                           v
+User Model                 API Key Model
     |                           |
-    v                           |
-Signed URL Repository          |
+    v                           v
+User Repository             API Key Repository
     |                           |
-    v                           |
-Signed URL Service             |
+    v                           v
+User Service                API Key Service
     |                           |
-    v                           |
-Signed URL API                 |
+    v                           v
+JWT Service                 Bucket Scope Middleware
     |                           |
-    +---------------------------+
+    v                           v
+Auth Middleware              (uses X-API-Key header)
+    |                           |
+    v                           v
++--- Permission Middleware ---+
+|   (checks role permissions)  |
++------------------------------+
+    |
+    v
+Signed URLs
     |
     v
 Standard API Responses
@@ -79,15 +92,20 @@ CLI Client
 
 ---
 
-# Epic 1 — API Keys
+# Epic 1 — API Keys (Scope Controller)
 
-Everything else depends on authentication.
+API keys no longer authenticate. They control **which buckets** a request can access.
 
 Without API keys:
 
-* Anyone can upload
-* Anyone can delete
-* No access boundaries
+* JWT-authenticated users access buckets based on their permissions
+* No per-integration bucket isolation
+
+With API keys:
+
+* Integrations get scoped to specific buckets
+* Keys act as a bucket allowlist filter on top of JWT auth
+* A request can include both `Authorization: Bearer <JWT>` and `X-API-Key: <key>`
 
 ---
 
@@ -116,7 +134,7 @@ The `Buckets` field is the isolation mechanism. Examples:
 |-----------------|----------------------|--------------------------------|
 | contracts-svc   | ["contracts"]        | contracts bucket only          |
 | kyc-svc         | ["kyc-uploads"]      | kyc-uploads bucket only        |
-| admin           | ["*"]                | everything                     |
+| ci-deploy       | ["*"]                | everything                     |
 
 ---
 
@@ -200,8 +218,8 @@ Endpoints:
 
 ```json
 {
-  "name": "kyc-service",
-  "buckets": ["kyc-uploads"]
+  "name": "ci-service",
+  "buckets": ["artifacts"]
 }
 ```
 
@@ -210,8 +228,8 @@ Endpoints:
 ```json
 {
   "id": "uuid...",
-  "name": "kyc-service",
-  "buckets": ["kyc-uploads"],
+  "name": "ci-service",
+  "buckets": ["artifacts"],
   "raw_key": "oort_f3b2f8...",
   "created_at": "..."
 }
@@ -232,129 +250,330 @@ Verify:
 
 ---
 
-# Epic 2 — Authentication Middleware
+# Epic 2 — JWT Authentication
 
-Protect write operations **and enforce bucket scoping**.
+Authenticate requests and identify the user.
 
 ---
 
-## Task 2.1 — Authentication Middleware
+## Task 2.1 — User Model
+
+```go
+type User struct {
+    ID           uuid.UUID
+    Email        string
+    PasswordHash string
+    CreatedAt    time.Time
+}
+```
+
+**Migration:**
+
+```sql
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+---
+
+## Task 2.2 — User Repository
+
+Methods:
+
+```go
+Create(ctx, user *User) error
+FindByEmail(ctx, email string) (*User, error)
+FindByID(ctx, id uuid.UUID) (*User, error)
+```
+
+---
+
+## Task 2.3 — User Service
+
+Business Rules:
+
+* Register: validate email, hash password with bcrypt, store
+* Login: find by email, verify bcrypt, return JWT
+* Get user by ID (for context identity)
+
+---
+
+## Task 2.4 — JWT Service
+
+Business Rules:
+
+* Sign: create JWT with user_id, email, roles, permissions, expiry claims
+* Validate: parse token, verify signature, check expiry
+* Extract claims: return user identity from token
+
+```go
+type Claims struct {
+    UserID      string   `json:"user_id"`
+    Email       string   `json:"email"`
+    Roles       []string `json:"roles"`
+    Permissions []string `json:"permissions"`
+    jwt.RegisteredClaims
+}
+```
+
+---
+
+## Task 2.5 — Auth Handler
+
+Endpoints:
+
+| Method | Endpoint      | Description              |
+| ------ | ------------- | ------------------------ |
+| POST   | /auth/login   | Login, returns JWT       |
+
+**POST body:**
+
+```json
+{
+  "email": "admin@oort.local",
+  "password": "admin123"
+}
+```
+
+**POST response:**
+
+```json
+{
+  "token": "eyJhbGci...",
+  "user": {
+    "id": "uuid...",
+    "email": "admin@oort.local"
+  }
+}
+```
+
+---
+
+## Task 2.6 — Auth Middleware
 
 Responsibilities:
 
-* Read Authorization header
-* Validate API key (find by hash)
-* Attach resolved key to request context
-* Middleware runs on **all** routes (even public ones can skip by not passing a key)
+* Read `Authorization: Bearer <token>` header
+* Validate JWT
+* Attach resolved user + permissions to request context
 
 **Context key:**
 
 ```go
 type contextKey string
-const KeyContextKey = contextKey("api_key")
 
-func GetAPIKey(ctx context.Context) *models.APIKey {
-    val := ctx.Value(KeyContextKey)
-    if val == nil {
-        return nil
-    }
-    return val.(*models.APIKey)
-}
-```
+const UserContextKey = contextKey("user")
+const PermissionsContextKey = contextKey("permissions")
 
-Example:
-
-```http
-Authorization: Bearer oort_xxx
+func GetUser(ctx context.Context) *models.User { ... }
+func GetPermissions(ctx context.Context) []string { ... }
 ```
 
 ---
 
-## Task 2.2 — Bucket Access Enforcer
+## Task 2.7 — First-Run Admin Seeding
 
-Separate middleware that runs after authentication **on bucket-scoped routes**.
+In `main.go`, after migrations:
 
-Responsibilities:
+1. Check if any users exist
+2. If not, create admin user from `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars
+3. Assign admin role with all permissions
 
-* Extract `{bucket}` from the URL path
-* Get the API key from context
-* Call `CanAccessBucket(key, bucketName)`
-* Reject with 403 if the key's allowlist doesn't include the bucket
+Config additions:
 
-**Logic:**
-
-```
-Request: PUT /buckets/contracts/objects/report.pdf
-    |
-    v
-Authenticate -> key found (contracts-svc)
-    |
-    v
-Enforce Scope -> key.Buckets = ["contracts"]
-                  bucket in path = "contracts"
-                  "contracts" in ["contracts"] -> allow
-    |
-    v
-Handler runs
-
----
-
-Request: PUT /buckets/kyc-uploads/objects/photo.jpg
-    |
-    v
-Authenticate -> same key (contracts-svc)
-    |
-    v
-Enforce Scope -> key.Buckets = ["contracts"]
-                  bucket in path = "kyc-uploads"
-                  "kyc-uploads" not in ["contracts"] -> 403 Forbidden
+```env
+JWT_SECRET=your-secret-key-here
+ADMIN_EMAIL=admin@oort.local
+ADMIN_PASSWORD=admin123
 ```
 
 ---
 
-## Task 2.3 — Route Protection
-
-Require authentication for:
-
-```text
-PUT object
-DELETE object
-POST bucket
-DELETE bucket (future)
-```
-
-Allow (no auth required):
-
-```text
-GET health
-GET signed url downloads
-```
-
-Bucket access enforcer runs on all authenticated bucket-scoped routes.
-
----
-
-## Task 2.4 — Middleware Tests
+## Task 2.8 — Auth Tests
 
 Verify:
 
-* Missing key rejected (401)
-* Invalid key rejected (401)
-* Valid key accepted (200)
-* Key with ["contracts"] can access contracts bucket
-* Key with ["contracts"] cannot access kyc-uploads bucket (403)
-* Wildcard key ["*"] can access any bucket
-* Public routes work without key
+* Login with valid credentials returns JWT
+* Login with invalid password rejected (401)
+* JWT validates correctly
+* Expired JWT rejected (401)
+* Missing auth header rejected (401)
+* Middleware attaches user to context
 
 ---
 
-# Epic 3 — Signed URLs
+# Epic 3 — Permissions / RBAC
 
-Temporary access without API key.
+Control what operations each user can perform.
 
 ---
 
-## Task 3.1 — Signed URL Model
+## Task 3.1 — Permission Constants
+
+```go
+const (
+    BucketCreate = "bucket:create"
+    BucketList   = "bucket:list"
+    BucketDelete = "bucket:delete"
+
+    ObjectUpload   = "object:upload"
+    ObjectDownload = "object:download"
+    ObjectDelete   = "object:delete"
+    ObjectList     = "object:list"
+
+    APIKeyCreate = "apikey:create"
+    APIKeyList   = "apikey:list"
+    APIKeyDelete = "apikey:delete"
+)
+```
+
+---
+
+## Task 3.2 — Role Model
+
+```go
+type Role struct {
+    ID          uuid.UUID
+    Name        string
+    Permissions []string
+    CreatedAt   time.Time
+}
+```
+
+**Migration:**
+
+```sql
+CREATE TABLE roles (
+    id UUID PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    permissions TEXT[] NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE user_roles (
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, role_id)
+);
+```
+
+---
+
+## Task 3.3 — Role Repository
+
+Methods:
+
+```go
+Create(ctx, role *Role) error
+FindByName(ctx, name string) (*Role, error)
+FindByUserID(ctx, userID uuid.UUID) ([]Role, error)
+AssignToUser(ctx, userID, roleID uuid.UUID) error
+```
+
+---
+
+## Task 3.4 — Permission Middleware
+
+```go
+func RequirePermission(permission string) func(http.Handler) http.Handler
+```
+
+Responsibilities:
+
+* Get permissions from request context (set by auth middleware)
+* Check if the required permission is in the user's permissions
+* Reject with 403 if not present
+
+**Route-permission mapping:**
+
+| Route                                      | Required Permission  |
+|--------------------------------------------|----------------------|
+| POST /buckets                              | bucket:create        |
+| GET /buckets                               | bucket:list          |
+| GET /buckets/{name}                        | bucket:list          |
+| PUT /buckets/{bucket}/objects/*            | object:upload        |
+| GET /buckets/{bucket}/objects/*            | object:download      |
+| DELETE /buckets/{bucket}/objects/*         | object:delete        |
+| GET /buckets/{bucket}/objects/             | object:list          |
+| POST /api-keys                             | apikey:create        |
+| GET /api-keys                              | apikey:list          |
+| DELETE /api-keys/{id}                      | apikey:delete        |
+
+---
+
+## Task 3.5 — Permission Tests
+
+Verify:
+
+* User with permission can access route
+* User without permission gets 403
+* Multiple permissions work
+* Admin role has all permissions
+
+---
+
+# Epic 4 — Bucket Scope Middleware
+
+Refactor the existing `BucketScope` middleware to be a pure scope controller (no auth).
+
+---
+
+## Task 4.1 — Refactor Scope Middleware
+
+Current `scope.go` does both auth + bucket-scoping. Split into:
+
+1. **Auth middleware** — JWT validation (Epic 2)
+2. **BucketScope middleware** — reads `X-API-Key`, validates, checks bucket access
+
+The new BucketScope middleware:
+
+* Reads `X-API-Key` header (optional)
+* If present, validates the key and checks `CanAccessBucket`
+* If absent, skips scope check (JWT permissions alone are sufficient)
+* If key present but bucket not allowed, rejects with 403
+
+---
+
+## Task 4.2 — Route Protection
+
+Final middleware stack per route group:
+
+```text
+/buckets/{bucket}/objects/* -> Auth -> RequirePermission -> BucketScope -> Handler
+/buckets/*                  -> Auth -> RequirePermission -> Handler
+/api-keys/*                 -> Auth -> RequirePermission -> Handler
+/auth/*                     -> (no middleware)
+/health                     -> (no middleware)
+```
+
+---
+
+## Task 4.3 — Scope Tests (Updated)
+
+Verify:
+
+* Valid API key + correct bucket passes scope check
+* Valid API key + wrong bucket rejected (403)
+* Invalid API key rejected (403)
+* Expired API key rejected (403)
+* Missing API key (with valid JWT) passes scope check (scope is optional)
+* Wildcard key works
+
+---
+
+# Epic 5 — Signed URLs
+
+Temporary access without authentication.
+
+(Unchanged from original — no pivot here)
+
+---
+
+## Task 5.1 — Signed URL Model
 
 ```go
 type SignedURL struct {
@@ -369,7 +588,7 @@ type SignedURL struct {
 
 ---
 
-## Task 3.2 — Signed URL Repository
+## Task 5.2 — Signed URL Repository
 
 Methods:
 
@@ -381,7 +600,7 @@ Delete(...)
 
 ---
 
-## Task 3.3 — Signed URL Service
+## Task 5.3 — Signed URL Service
 
 Flow:
 
@@ -397,7 +616,7 @@ Return URL
 
 ---
 
-## Task 3.4 — Signed URL API
+## Task 5.4 — Signed URL API
 
 Endpoints:
 
@@ -408,7 +627,7 @@ Endpoints:
 
 ---
 
-## Task 3.5 — Signed URL Tests
+## Task 5.5 — Signed URL Tests
 
 Verify:
 
@@ -418,15 +637,13 @@ Verify:
 
 ---
 
-# Epic 4 — Standard API Responses
+# Epic 6 — Standard API Responses
 
-Currently handlers return mixed responses.
-
-Normalize everything.
+Normalize all handler responses.
 
 ---
 
-## Task 4.1 — Response Models
+## Task 6.1 — Response Models
 
 Success:
 
@@ -451,7 +668,7 @@ Error:
 
 ---
 
-## Task 4.2 — Response Helpers
+## Task 6.2 — Response Helpers
 
 File:
 
@@ -469,17 +686,19 @@ Error(...)
 
 ---
 
-## Task 4.3 — Response Refactor
+## Task 6.3 — Response Refactor
 
 Update:
 
 * Bucket handlers
 * Object handlers
-* Future endpoints
+* Auth handlers
+* Key handlers
+* Health handlers
 
 ---
 
-## Task 4.4 — Response Tests
+## Task 6.4 — Response Tests
 
 Verify:
 
@@ -488,13 +707,13 @@ Verify:
 
 ---
 
-# Epic 5 — Health Endpoints
+# Epic 7 — Health Endpoints
 
 For monitoring and operations.
 
 ---
 
-## Task 5.1 — Liveness Endpoint
+## Task 7.1 — Liveness Endpoint
 
 ```http
 GET /health/live
@@ -510,7 +729,7 @@ Response:
 
 ---
 
-## Task 5.2 — Readiness Endpoint
+## Task 7.2 — Readiness Endpoint
 
 Checks:
 
@@ -523,7 +742,7 @@ GET /health/ready
 
 ---
 
-## Task 5.3 — Health Tests
+## Task 7.3 — Health Tests
 
 Verify:
 
@@ -532,13 +751,13 @@ Verify:
 
 ---
 
-# Epic 6 — CLI Tool
+# Epic 8 — CLI Tool
 
 Makes Oort usable without curl.
 
 ---
 
-## Task 6.1 — CLI Project
+## Task 8.1 — CLI Project
 
 ```text
 cmd/oortctl
@@ -547,6 +766,7 @@ cmd/oortctl
 Commands:
 
 ```bash
+oortctl login
 oortctl bucket create
 oortctl bucket list
 oortctl upload
@@ -555,7 +775,7 @@ oortctl download
 
 ---
 
-## Task 6.2 — API Client
+## Task 8.2 — API Client
 
 Reusable HTTP client.
 
@@ -565,7 +785,17 @@ internal/client
 
 ---
 
-## Task 6.3 — Bucket Commands
+## Task 8.3 — Auth Commands
+
+```bash
+oortctl login
+```
+
+Stores JWT token locally for subsequent commands.
+
+---
+
+## Task 8.4 — Bucket Commands
 
 ```bash
 oortctl bucket create documents
@@ -574,7 +804,7 @@ oortctl bucket list
 
 ---
 
-## Task 6.4 — Object Commands
+## Task 8.5 — Object Commands
 
 ```bash
 oortctl upload contract.pdf
@@ -583,60 +813,90 @@ oortctl download contract.pdf
 
 ---
 
-## Task 6.5 — CLI Tests
+## Task 8.6 — CLI Tests
 
 Verify:
 
 * Command execution
 * Request generation
+* Token storage
 * Error handling
 
 ---
 
 # Actual Execution Order
 
-Don't jump around.
+## Sprint 1 ✅ (Completed — original API key implementation)
 
-## Sprint 1
+* [x] API key model (with Buckets allowlist)
+* [x] API key repository + migration
+* [x] API key service (key gen, hash, CanAccessBucket)
+* [x] API key API (POST/GET/DELETE, raw key on creation)
+* [x] API key tests
 
-* [ ] API key model (with Buckets allowlist)
-* [ ] API key repository + migration
-* [ ] API key service (key gen, hash, CanAccessBucket)
-* [ ] API key API (POST/GET/DELETE, raw key on creation)
-* [ ] API key tests
+## Sprint 2 ✅ (Completed — new architecture)
 
-## Sprint 2
+* [x] Bucket scope middleware tests (`scope_test.go`)
+* [x] Fix expired key UTC bug in key service
 
-* [ ] Authentication middleware (validate key, attach to context)
-* [ ] Bucket access enforcer middleware (CanAccessBucket check)
-* [ ] Route protection config (public vs authenticated)
-* [ ] Middleware + enforcer tests
+## Sprint 3 — JWT Auth Foundation
 
-## Sprint 3
+* [ ] Migration 0004: users table
+* [ ] User model
+* [ ] User repository + Postgres implementation
+* [ ] User service (register, login with bcrypt)
+* [ ] JWT service (sign, validate, extract claims)
+* [ ] Dependencies: `golang-jwt/jwt/v5`, `golang.org/x/crypto`
+* [ ] Auth handler: POST /auth/login
+* [ ] Auth middleware: validate JWT, attach to context
+* [ ] Config: JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
+* [ ] First-run admin seeding in main.go
+* [ ] Auth tests
+
+## Sprint 4 — Permissions / RBAC
+
+* [ ] Permission constants
+* [ ] Migration 0005: roles + user_roles tables
+* [ ] Role model + repository + Postgres implementation
+* [ ] Role service (assign to user, get permissions)
+* [ ] Permission middleware (RequirePermission)
+* [ ] Seed admin role with all permissions
+* [ ] Permission tests
+
+## Sprint 5 — Scope Refactor + Route Protection
+
+* [ ] Refactor BucketScope middleware (remove auth, keep scope)
+* [ ] Apply Auth + Permission + Scope middleware to all routes
+* [ ] Protect /buckets endpoints
+* [ ] Protect /api-keys endpoints
+* [ ] Updated scope tests
+
+## Sprint 6 — Signed URLs
 
 * [ ] Signed URL model
-* [ ] Signed URL repository
+* [ ] Signed URL repository + migration
 * [ ] Signed URL service
 * [ ] Signed URL API
 * [ ] Signed URL tests
 
-## Sprint 4
+## Sprint 7 — Standard API Responses
 
 * [ ] Response models
 * [ ] Response helpers
 * [ ] Handler refactor
 * [ ] Response tests
 
-## Sprint 5
+## Sprint 8 — Health Endpoints
 
-* [ ] Liveness endpoint
-* [ ] Readiness endpoint
+* [ ] Liveness endpoint (JSON format)
+* [ ] Readiness endpoint (DB + storage check)
 * [ ] Health tests
 
-## Sprint 6
+## Sprint 9 — CLI Tool
 
-* [ ] CLI project
-* [ ] API client
+* [ ] CLI project scaffold
+* [ ] API client library
+* [ ] Auth commands (login, token storage)
 * [ ] Bucket commands
 * [ ] Object commands
 * [ ] CLI tests
