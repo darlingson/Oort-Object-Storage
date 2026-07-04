@@ -110,6 +110,7 @@ func (r *PostgresUserRepository) AssignPermission(
 	query := `
 	INSERT INTO user_permissions(user_id, permission_id)
 	VALUES ($1, $2)
+	ON CONFLICT DO NOTHING
 	`
 
 	_, err := r.db.ExecContext(ctx, query, userID, permissionID)
