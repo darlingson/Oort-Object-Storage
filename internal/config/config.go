@@ -15,6 +15,16 @@ type Config struct {
 	DBName     string
 
 	AppPort string
+
+	JWTSecret     string
+	AdminEmail    string
+	AdminPassword string
+}
+
+var globalConfig *Config
+
+func Get() *Config {
+	return globalConfig
 }
 
 func Load() *Config {
@@ -25,7 +35,7 @@ func Load() *Config {
 		log.Println(".env file not found")
 	}
 
-	return &Config{
+	globalConfig = &Config{
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnv("DB_PORT", "5432"),
 		DBUser:     getEnv("DB_USER", "postgres"),
@@ -33,7 +43,13 @@ func Load() *Config {
 		DBName:     getEnv("DB_NAME", "oort_objects"),
 
 		AppPort: getEnv("APP_PORT", "3333"),
+
+		JWTSecret:     getEnv("JWT_SECRET", "change-me"),
+		AdminEmail:    getEnv("ADMIN_EMAIL", "admin@oort.local"),
+		AdminPassword: getEnv("ADMIN_PASSWORD", "admin123"),
 	}
+
+	return globalConfig
 }
 
 func getEnv(key string, fallback string) string {

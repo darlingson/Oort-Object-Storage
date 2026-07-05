@@ -83,7 +83,7 @@ Filesystem -> File Contents
 
 ## Current Status
 
-Project status: Early Development
+Project status: Early Development — Phase 2 DX
 
 ### Implemented
 
@@ -92,12 +92,16 @@ Project status: Early Development
 * Configuration management
 * Database migrations
 * Automated tests
+* Bucket management (CRUD)
+* Filesystem storage driver
+* Object upload pipeline (streaming, SHA256 checksums)
+* API key management (scope controller — bucket allowlist)
+* Bucket scope middleware (X-API-Key bucket access enforcement)
 
 ### In Progress
 
-* Bucket management
-* Filesystem storage driver
-* Object upload pipeline
+* JWT authentication (login, token validation, context identity)
+* Permissions / RBAC (roles, per-operation permissions)
 
 ---
 
@@ -115,11 +119,12 @@ Project status: Early Development
 
 ### Phase 2: Developer Experience
 
-* API keys
+* API keys (scope controller — bucket allowlist)
+* JWT authentication with permissions/RBAC
 * Signed URLs
-* Structured API responses
-* CLI tool
+* Standard API responses
 * Health endpoints
+* CLI tool
 
 ### Phase 3: Production Features
 
@@ -207,6 +212,10 @@ DB_PASSWORD=masterpassword
 DB_NAME=oort_objects
 
 APP_PORT=3333
+
+JWT_SECRET=change-me-to-a-random-secret
+ADMIN_EMAIL=admin@oort.local
+ADMIN_PASSWORD=admin123
 ```
 
 ### Run the Server
