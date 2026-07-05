@@ -69,6 +69,10 @@ func main() {
 	healthService := services.NewHealthService(db, "./data/blobs")
 	healthHandler := handlers.NewHealthHandler(healthService)
 
+	signedURLRepo := repositories.NewPostgresSignedURLRepository(db)
+	signedURLSvc := services.NewSignedURLService(signedURLRepo)
+	signedURLHandler := handlers.NewSignedURLHandler(signedURLSvc, objectService)
+
 	router := routes.SetupRoutes(
 		bucketHandler,
 		objectHandler,
@@ -76,8 +80,10 @@ func main() {
 		authHandler,
 		userHandler,
 		healthHandler,
+		signedURLHandler,
 		keyService,
 		jwtService,
+		signedURLSvc,
 	)
 
 	log.Printf("server starting on port %s", cfg.AppPort)

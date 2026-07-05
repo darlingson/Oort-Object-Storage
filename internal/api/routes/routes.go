@@ -17,8 +17,10 @@ func SetupRoutes(
 	authHandler *handlers.AuthHandler,
 	userHandler *handlers.UserHandler,
 	healthHandler *handlers.HealthHandler,
+	signedURLHandler *handlers.SignedURLHandler,
 	keyService *services.KeyService,
 	jwtService *services.JWTService,
+	signedURLSvc *services.SignedURLService,
 ) http.Handler {
 
 	r := chi.NewRouter()
@@ -69,8 +71,12 @@ func SetupRoutes(
 		middleware.RequirePermission("bucket:list"),
 	).Get("/buckets/{name}", bucketHandler.GetBucket)
 
+	r.With(
+		middleware.ObjectAccess(keyService, jwtService, signedURLSvc),
+	).Post("/buckets/{bucket}/objects/{key}/sign", signedURLHandler.Sign)
+
 	r.Route("/buckets/{bucket}/objects", func(r chi.Router) {
-		r.Use(middleware.ObjectAccess(keyService, jwtService))
+		r.Use(middleware.ObjectAccess(keyService, jwtService, signedURLSvc))
 
 		r.Put("/*", objectHandler.UploadObject)
 		r.Get("/*", objectHandler.DownloadObject)

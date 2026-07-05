@@ -15,6 +15,7 @@ const (
 	PermissionObjectDownload = "object:download"
 	PermissionObjectDelete   = "object:delete"
 	PermissionObjectList     = "object:list"
+	PermissionObjectSign     = "object:sign"
 
 	PermissionAPIKeyCreate = "apikey:create"
 	PermissionAPIKeyList   = "apikey:list"
@@ -39,6 +40,7 @@ var AllPermissionNames = []string{
 	PermissionUserCreate,
 	PermissionUserList,
 	PermissionUserGrantPermission,
+	PermissionObjectSign,
 }
 
 type Permission struct {

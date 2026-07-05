@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -10,12 +11,15 @@ import (
 	"github.com/darlingson/Oort-Object-Storage/internal/services"
 )
 
-func objectPermission(r *http.Request, bucketName string) string {
+func objectPermission(r *http.Request) string {
 	if r.Method == http.MethodPut {
 		return "object:upload"
 	}
 	if r.Method == http.MethodDelete {
 		return "object:delete"
+	}
+	if r.Method == http.MethodPost {
+		return "object:sign"
 	}
 	if r.Method == http.MethodGet {
 		key := chi.URLParam(r, "*")
@@ -38,12 +42,57 @@ func extractBearerToken(header string) string {
 func ObjectAccess(
 	keyService *services.KeyService,
 	jwtService *services.JWTService,
+	signedURLSvc *services.SignedURLService,
 ) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 
 		return http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
+
+				token := r.URL.Query().Get("token")
+				if token != "" && signedURLSvc != nil {
+					bucketName := chi.URLParam(r, "bucket")
+					objectKey := chi.URLParam(r, "*")
+
+					perm := objectPermission(r)
+					op := "download"
+					if perm == "object:upload" {
+						op = "upload"
+					}
+
+					result, err := signedURLSvc.Validate(
+						r.Context(), token, bucketName, objectKey, op,
+					)
+					if err != nil {
+						status := http.StatusForbidden
+						if errors.Is(err, services.ErrTokenNotFound) ||
+							errors.Is(err, services.ErrTokenExpired) {
+							status = http.StatusUnauthorized
+						}
+						http.Error(w, err.Error(), status)
+						return
+					}
+
+					ctx := context.WithValue(
+						r.Context(),
+						UserContextKey,
+						"",
+					)
+					ctx = context.WithValue(
+						ctx,
+						PermissionsContextKey,
+						[]string{},
+					)
+					next.ServeHTTP(w, r.WithContext(ctx))
+
+					if op == "upload" && result != nil {
+						_ = signedURLSvc.Consume(
+							r.Context(), result.ID,
+						)
+					}
+					return
+				}
 
 				apiKey := r.Header.Get("X-API-Key")
 				authHeader := r.Header.Get("Authorization")
@@ -114,7 +163,7 @@ func ObjectAccess(
 					return
 				}
 
-				requiredPerm := objectPermission(r, "")
+				requiredPerm := objectPermission(r)
 				if requiredPerm != "" {
 					found := false
 					for _, p := range claims.Permissions {

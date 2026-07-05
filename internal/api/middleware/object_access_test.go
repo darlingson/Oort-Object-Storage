@@ -87,7 +87,7 @@ func objectAccessBearerReq(method, bucket, token string) *http.Request {
 
 func TestObjectAccess_NoCredentials(t *testing.T) {
 	keySvc, jwtSvc, _, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(keySvc, jwtSvc)
+	middleware := ObjectAccess(keySvc, jwtSvc, nil)
 
 	rr := httptest.NewRecorder()
 	req := objectAccessReq(http.MethodGet, "test-bucket", "")
@@ -101,7 +101,7 @@ func TestObjectAccess_NoCredentials(t *testing.T) {
 
 func TestObjectAccess_APIKey_ValidBucket(t *testing.T) {
 	keySvc, jwtSvc, rawKey, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(keySvc, jwtSvc)
+	middleware := ObjectAccess(keySvc, jwtSvc, nil)
 
 	rr := httptest.NewRecorder()
 	req := objectAccessReq(http.MethodPut, "test-bucket", rawKey)
@@ -115,7 +115,7 @@ func TestObjectAccess_APIKey_ValidBucket(t *testing.T) {
 
 func TestObjectAccess_APIKey_WrongBucket(t *testing.T) {
 	keySvc, jwtSvc, rawKey, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(keySvc, jwtSvc)
+	middleware := ObjectAccess(keySvc, jwtSvc, nil)
 
 	rr := httptest.NewRecorder()
 	req := objectAccessReq(http.MethodPut, "other-bucket", rawKey)
@@ -129,7 +129,7 @@ func TestObjectAccess_APIKey_WrongBucket(t *testing.T) {
 
 func TestObjectAccess_APIKey_InvalidKey(t *testing.T) {
 	keySvc, jwtSvc, _, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(keySvc, jwtSvc)
+	middleware := ObjectAccess(keySvc, jwtSvc, nil)
 
 	rr := httptest.NewRecorder()
 	req := objectAccessReq(
@@ -146,7 +146,7 @@ func TestObjectAccess_APIKey_InvalidKey(t *testing.T) {
 
 func TestObjectAccess_APIKey_Wildcard(t *testing.T) {
 	keySvc, jwtSvc, _, adminRawKey := setupObjectAccessTest(t)
-	middleware := ObjectAccess(keySvc, jwtSvc)
+	middleware := ObjectAccess(keySvc, jwtSvc, nil)
 
 	rr := httptest.NewRecorder()
 	req := objectAccessReq(http.MethodGet, "any-bucket", adminRawKey)
@@ -160,7 +160,7 @@ func TestObjectAccess_APIKey_Wildcard(t *testing.T) {
 
 func TestObjectAccess_JWT_ValidPermission(t *testing.T) {
 	_, jwtSvc, _, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(services.NewKeyService(nil), jwtSvc)
+	middleware := ObjectAccess(services.NewKeyService(nil), jwtSvc, nil)
 
 	token, err := jwtSvc.Create(
 		&models.User{
@@ -185,7 +185,7 @@ func TestObjectAccess_JWT_ValidPermission(t *testing.T) {
 
 func TestObjectAccess_JWT_MissingPermission(t *testing.T) {
 	_, jwtSvc, _, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(services.NewKeyService(nil), jwtSvc)
+	middleware := ObjectAccess(services.NewKeyService(nil), jwtSvc, nil)
 
 	token, err := jwtSvc.Create(
 		&models.User{
@@ -210,7 +210,7 @@ func TestObjectAccess_JWT_MissingPermission(t *testing.T) {
 
 func TestObjectAccess_JWT_InvalidToken(t *testing.T) {
 	_, jwtSvc, _, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(services.NewKeyService(nil), jwtSvc)
+	middleware := ObjectAccess(services.NewKeyService(nil), jwtSvc, nil)
 
 	rr := httptest.NewRecorder()
 	req := objectAccessBearerReq(
@@ -227,7 +227,7 @@ func TestObjectAccess_JWT_InvalidToken(t *testing.T) {
 
 func TestObjectAccess_MissingBucketParam(t *testing.T) {
 	keySvc, jwtSvc, rawKey, _ := setupObjectAccessTest(t)
-	middleware := ObjectAccess(keySvc, jwtSvc)
+	middleware := ObjectAccess(keySvc, jwtSvc, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-API-Key", rawKey)
