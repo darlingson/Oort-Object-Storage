@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 
@@ -10,6 +12,46 @@ import (
 
 	"github.com/darlingson/Oort-Object-Storage/internal/services"
 )
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("hijacking not supported")
+}
+
+func extractObjectKey(r *http.Request) string {
+	prefix := "/buckets/"
+	path := r.URL.Path
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	objPrefix := "/objects/"
+	objRest := strings.TrimPrefix(rest[len(parts[0]):], objPrefix)
+	return objRest
+}
 
 func objectPermission(r *http.Request) string {
 	if r.Method == http.MethodPut {
@@ -22,8 +64,8 @@ func objectPermission(r *http.Request) string {
 		return "object:sign"
 	}
 	if r.Method == http.MethodGet {
-		key := chi.URLParam(r, "*")
-		if key == "" || key == "/" {
+		key := extractObjectKey(r)
+		if key == "" {
 			return "object:list"
 		}
 		return "object:download"
@@ -53,14 +95,13 @@ func ObjectAccess(
 				token := r.URL.Query().Get("token")
 				if token != "" && signedURLSvc != nil {
 					bucketName := chi.URLParam(r, "bucket")
-					objectKey := chi.URLParam(r, "*")
+					objectKey := extractObjectKey(r)
 
 					perm := objectPermission(r)
 					op := "download"
 					if perm == "object:upload" {
 						op = "upload"
 					}
-
 					result, err := signedURLSvc.Validate(
 						r.Context(), token, bucketName, objectKey, op,
 					)
@@ -84,9 +125,11 @@ func ObjectAccess(
 						PermissionsContextKey,
 						[]string{},
 					)
-					next.ServeHTTP(w, r.WithContext(ctx))
 
-					if op == "upload" && result != nil {
+					sw := &statusRecorder{ResponseWriter: w}
+					next.ServeHTTP(sw, r.WithContext(ctx))
+
+					if op == "upload" && result != nil && sw.status < 300 {
 						_ = signedURLSvc.Consume(
 							r.Context(), result.ID,
 						)

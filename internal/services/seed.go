@@ -31,16 +31,18 @@ func NewSeedService(
 }
 
 func (s *SeedService) SeedIfNeeded(ctx context.Context) {
+	s.seedPermissions(ctx)
 
+	adminExists := true
 	_, err := s.userRepo.FindByEmail(ctx, config.Get().AdminEmail)
-	if err == nil {
-		return
+	if err != nil {
+		adminExists = false
 	}
 
-	log.Println("seeding initial data")
-
-	s.seedPermissions(ctx)
-	s.seedAdminRole(ctx)
+	if !adminExists {
+		log.Println("seeding initial data")
+		s.seedAdminRole(ctx)
+	}
 }
 
 func (s *SeedService) seedPermissions(ctx context.Context) {
